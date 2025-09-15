@@ -1,0 +1,31 @@
+{
+    "name": "auto-absensi-lms-unindra",
+    "version": "1.0.0",
+    "description": "Sistem otomatis untuk mengisi absensi di LMS Universitas Indraprasta",
+    "main": "attendance-scheduler.js",
+    "scripts": {
+        "start": "node attendance-scheduler.js",
+        "manual": "node attendance-scheduler.js --manual-captcha",
+        "no-cookies": "node attendance-scheduler.js --no-cookie-headers",
+        "test-login": "node test-login.js",
+        "test-timezone": "node test-timezone.js"
+    },
+    "author": "TobyG74",
+    "license": "MIT",
+    "keywords": [
+        "automation",
+        "attendance",
+        "absensi",
+        "LMS",
+        "indraprasta",
+        "unindra"
+    ],
+    "dependencies": {
+        "axios": "^1.12.2",
+        "cheerio": "^1.1.2",
+        "moment-timezone": "^0.6.0",
+        "node-cron": "^4.2.1",
+        "playwright": "^1.55.0",
+        "playwright-chromium": "^1.55.0"
+    }
+}
