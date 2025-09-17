@@ -70,15 +70,72 @@ class AutoAttendanceSystem {
         const links = [];
         let match;
 
+        console.log("[ > ] Mulai parsing link pertemuan...");
+
         while ((match = linkPattern.exec(htmlContent)) !== null) {
             const [, url, meetingName] = match;
+
+            const meetingNumberMatch = meetingName.match(/pertemuan\s*(\d+)/i);
+            const meetingNumber = meetingNumberMatch
+                ? parseInt(meetingNumberMatch[1])
+                : 0;
+
+            console.log(
+                `[ > ] Ditemukan pertemuan: "${meetingName}" dengan nomor ${meetingNumber}`
+            );
+
             links.push({
                 url: url,
                 name: meetingName.trim(),
+                meetingNumber: meetingNumber,
+                subject: this.extractSubjectFromMeetingName(meetingName),
             });
         }
 
+        // Urutkan berdasarkan nomor pertemuan (tertinggi > terendah)
+        links.sort((a, b) => b.meetingNumber - a.meetingNumber);
+
+        console.log(
+            `[ > ] Total ${links.length} pertemuan ditemukan dan diurutkan`
+        );
+        if (links.length > 0) {
+            console.log(
+                `[ > ] Pertemuan terbaru: ${links[0].name} (Nomor: ${links[0].meetingNumber})`
+            );
+        }
+
         return links;
+    }
+
+    // Helper function untuk extract nama mata kuliah dari nama pertemuan
+    extractSubjectFromMeetingName(meetingName) {
+        let subject = meetingName;
+
+        subject = subject.replace(/pertemuan\s*\d+\s*[-–]?\s*/i, "");
+
+        const patterns = [
+            /([A-Z]{2,4}\s*\d*)\s*[-–]/,
+            /[-–]\s*([A-Z]{2,4}\s*\d*)/,
+            /^([A-Z]{2,4}\s*\d*)/,
+        ];
+
+        for (const pattern of patterns) {
+            const match = subject.match(pattern);
+            if (match) {
+                return match[1].trim();
+            }
+        }
+
+        // ambil kata pertama yang terlihat seperti kode MK
+        const words = subject.split(/\s+/);
+        for (const word of words) {
+            if (/^[A-Z]{2,4}\d*$/.test(word)) {
+                return word;
+            }
+        }
+
+        // return nama asli
+        return meetingName.trim();
     }
 
     // Muat jadwal dari halaman dashboard yang udah login
@@ -123,6 +180,18 @@ class AutoAttendanceSystem {
             console.log(
                 `[ ? ] Ketemu ${this.meetingLinks.length} link pertemuan`
             );
+
+            // Debug: tampilkan semua pertemuan yang ditemukan
+            if (this.meetingLinks.length > 0) {
+                console.log("[ ? ] Daftar pertemuan yang ditemukan:");
+                this.meetingLinks.forEach((meeting, index) => {
+                    console.log(
+                        `${index + 1}. ${meeting.name} (Nomor: ${
+                            meeting.meetingNumber
+                        }, Subject: ${meeting.subject})`
+                    );
+                });
+            }
 
             return true;
         } catch (error) {
@@ -1090,37 +1159,90 @@ class AutoAttendanceSystem {
 
             // Cari link pertemuan yang relevan untuk mata kuliah
             const relevantMeetings = this.meetingLinks.filter((link) => {
-                return link.url.length > 0;
+                if (!link.url || link.url.length === 0) return false;
+
+                // Cek apakah nama pertemuan mengandung subject dari activeClass
+                const meetingSubject = link.subject.toLowerCase();
+                const classSubject = activeClass.subject.toLowerCase();
+
+                // Coba berbagai cara matching
+                const isMatch =
+                    meetingSubject.includes(classSubject) ||
+                    classSubject.includes(meetingSubject) ||
+                    link.name.toLowerCase().includes(classSubject) ||
+                    classSubject.includes(
+                        link.name.toLowerCase().split(" ")[0]
+                    );
+
+                if (isMatch) {
+                    console.log(
+                        `[ > ] Match: "${link.name}" cocok dengan "${activeClass.subject}" (Nomor: ${link.meetingNumber})`
+                    );
+                }
+
+                return isMatch;
             });
+
+            console.log(
+                `[ ? ] Ketemu ${relevantMeetings.length} pertemuan untuk ${activeClass.subject}`
+            );
+
+            // Debug: tampilkan semua pertemuan yang tersedia
+            if (relevantMeetings.length === 0 && this.meetingLinks.length > 0) {
+                console.log("[ ? ] Pertemuan yang tersedia:");
+                this.meetingLinks.forEach((link) => {
+                    console.log(
+                        `   - ${link.name} (Subject: "${link.subject}", Nomor: ${link.meetingNumber})`
+                    );
+                });
+            }
 
             if (relevantMeetings.length === 0) {
                 console.log(
-                    `[ ! ] No meeting links found for ${activeClass.subject}`
+                    `[ ! ] Ngga ada pertemuan yang cocok untuk ${activeClass.subject}`
                 );
+
+                // Fallback: ambil pertemuan terbaru dari semua pertemuan
+                const allMeetings = this.meetingLinks.filter(
+                    (link) => link.url && link.url.length > 0
+                );
+                if (allMeetings.length > 0) {
+                    console.log(
+                        `[ ? ] Fallback: pake pertemuan terbaru dari semua pertemuan`
+                    );
+                    const latestMeeting = allMeetings[0]; // Sudah diurutkan dari terbaru
+
+                    const success = await this.downloadMaterials(
+                        latestMeeting.url,
+                        activeClass.subject,
+                        latestMeeting.name
+                    );
+
+                    if (success) {
+                        await this.logAttendanceSuccess(
+                            activeClass,
+                            latestMeeting
+                        );
+                    }
+                    return success;
+                }
                 return false;
             }
 
-            // Download dari pertemuan terbaru (atau yang pertama available)
-            const meeting = relevantMeetings[0];
+            // Ambil pertemuan terbaru (nomor tertinggi) dari yang relevan
+            const latestMeeting = relevantMeetings[0]; // Sudah diurutkan dari terbaru
+            console.log(
+                `[ > ] Pake pertemuan terbaru: ${latestMeeting.name} (Nomor: ${latestMeeting.meetingNumber})`
+            );
+
             const success = await this.downloadMaterials(
-                meeting.url,
+                latestMeeting.url,
                 activeClass.subject,
-                meeting.name
+                latestMeeting.name
             );
 
             if (success) {
-                // Log attendance dengan timezone Jakarta
-                const attendanceLog = {
-                    timestamp: moment.tz("Asia/Jakarta").format(),
-                    timestampISO: moment.tz("Asia/Jakarta").toISOString(),
-                    class: activeClass.subject,
-                    day: activeClass.dayIndonesian,
-                    time: `${activeClass.startTime}-${activeClass.endTime}`,
-                    meeting: meeting.name,
-                    status: "SUCCESS",
-                };
-
-                await this.logAttendance(attendanceLog);
+                await this.logAttendanceSuccess(activeClass, latestMeeting);
             }
 
             return success;
@@ -1128,6 +1250,22 @@ class AutoAttendanceSystem {
             console.error(`[ X ] Error proses absensi: ${error}`);
             return false;
         }
+    }
+
+    // Helper function untuk log attendance yang berhasil
+    async logAttendanceSuccess(activeClass, meeting) {
+        const attendanceLog = {
+            timestamp: moment.tz("Asia/Jakarta").format(),
+            timestampISO: moment.tz("Asia/Jakarta").toISOString(),
+            class: activeClass.subject,
+            day: activeClass.dayIndonesian,
+            time: `${activeClass.startTime}-${activeClass.endTime}`,
+            meeting: meeting.name,
+            meetingNumber: meeting.meetingNumber,
+            status: "SUCCESS",
+        };
+
+        await this.logAttendance(attendanceLog);
     }
 
     // Log attendance ke file
